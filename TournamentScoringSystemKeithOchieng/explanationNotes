@@ -1,0 +1,23 @@
+For the SQl database:
+
+
+
+
+
+The following is what this SQL dump for a tournament database does:
+
+The following tables are produced by it:
+
+events -Keeps track of event information such as event name and type (team or individual).
+matchups: Holds matchup data, such as the name of the event, the winner, the round number, the outcome (win, draw, or defeat), and the status (completed or pending).
+Participants: Keeps track of participant information, such as name, type, and points.
+scores: Keeps track of each competitor's scores for every event round.
+Teams: Holds information on a team, such as its name, members, and points.
+
+Additionally, it establishes auto-increment for id fields so that they automatically grow with each new entry and specifies primary keys for every table.
+
+To guarantee correct data encoding and time zone management, it also manages character sets and timezone settings. These modifications become permanent in the database when the transaction is finally committed.
+
+
+
+
