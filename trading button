@@ -1,0 +1,285 @@
+//+------------------------------------------------------------------+
+//|                                            EnhancedClickTradeEA.mq5|
+//|                                                                    |
+//+------------------------------------------------------------------+
+#property copyright "Keith Ochieng"
+#property link      ""
+#property version   "1.00"
+#property strict
+
+// Input Parameters
+input group "Trade Parameters"
+input double InpStopLoss    = 100;     // Stop Loss in points
+input double InpTakeProfit  = 200;     // Take Profit in points
+input double InpLotSize     = 0.1;     // Lot Size
+input string InpComment     = "EnhancedClickTradeEA"; // Trade Comment
+
+input group "Button Settings"
+input int    InpButtonWidth  = 150;    // Button Width
+input int    InpButtonHeight = 40;     // Button Height
+input int    InpXOffset      = 20;     // X Distance from corner
+input int    InpYOffset      = 20;     // Y Distance from corner
+input color  InpBuyColor     = clrForestGreen;   // Buy Button Color
+input color  InpSellColor    = clrCrimson;       // Sell Button Color
+input color  InpCloseColor   = clrDarkOrange;    // Close All Button Color
+input int    InpFontSize     = 12;     // Button Font Size
+
+// Global Variables
+int buyButton, sellButton, closeAllButton;
+string buyText, sellText;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                     |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+    // Create Buy and Sell buttons with position information
+    buyButton = ButtonCreate(0, "BuyButton", 0, 
+                           InpXOffset, 
+                           InpYOffset, 
+                           InpButtonWidth, 
+                           InpButtonHeight, 
+                           CORNER_LEFT_UPPER, 
+                           "BUY", "Arial Black", 
+                           InpFontSize, 
+                           clrWhite, 
+                           InpBuyColor, 
+                           clrBlack);
+                           
+    sellButton = ButtonCreate(0, "SellButton", 0, 
+                            InpXOffset, 
+                            InpYOffset + InpButtonHeight + 5, 
+                            InpButtonWidth, 
+                            InpButtonHeight, 
+                            CORNER_LEFT_UPPER, 
+                            "SELL", "Arial Black", 
+                            InpFontSize, 
+                            clrWhite, 
+                            InpSellColor, 
+                            clrBlack);
+                            
+    closeAllButton = ButtonCreate(0, "CloseAllButton", 0, 
+                                InpXOffset, 
+                                InpYOffset + (InpButtonHeight + 5) * 2, 
+                                InpButtonWidth, 
+                                InpButtonHeight, 
+                                CORNER_LEFT_UPPER, 
+                                "CLOSE ALL", "Arial Black", 
+                                InpFontSize, 
+                                clrWhite, 
+                                InpCloseColor, 
+                                clrBlack);
+    
+    // Create labels for position information
+    CreateLabel("CurrentPrice", InpXOffset + InpButtonWidth + 10, InpYOffset, "Current Price: ", clrWhite);
+    CreateLabel("CurrentSpread", InpXOffset + InpButtonWidth + 10, InpYOffset + 20, "Spread: ", clrWhite);
+    CreateLabel("SLInfo", InpXOffset + InpButtonWidth + 10, InpYOffset + 40, "SL Distance: ", clrWhite);
+    CreateLabel("TPInfo", InpXOffset + InpButtonWidth + 10, InpYOffset + 60, "TP Distance: ", clrWhite);
+    
+    EventSetTimer(1); // Update info every second
+    
+    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                   |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+    ObjectsDeleteAll(0, "");
+    EventKillTimer();
+}
+
+//+------------------------------------------------------------------+
+//| Timer function                                                     |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+    UpdateLabels();
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                              |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+    UpdateLabels();
+}
+
+//+------------------------------------------------------------------+
+//| ChartEvent function                                               |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long& lparam, const double& dparam, const string& sparam)
+{
+    if(id == CHARTEVENT_OBJECT_CLICK)
+    {
+        if(sparam == "BuyButton")
+            OpenTrade(ORDER_TYPE_BUY);
+        else if(sparam == "SellButton")
+            OpenTrade(ORDER_TYPE_SELL);
+        else if(sparam == "CloseAllButton")
+            CloseAllTrades();
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Function to close all open trades                                 |
+//+------------------------------------------------------------------+
+void CloseAllTrades()
+{
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+        
+        if(!PositionSelectByTicket(ticket)) continue;
+        
+        string symbol = PositionGetString(POSITION_SYMBOL);
+        if(symbol != _Symbol) continue;
+        
+        MqlTradeRequest request = {};
+        MqlTradeResult result = {};
+        
+        request.action = TRADE_ACTION_DEAL;
+        request.position = ticket;
+        request.symbol = symbol;
+        request.volume = PositionGetDouble(POSITION_VOLUME);
+        request.deviation = 10;
+        request.magic = 123456;
+        
+        if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+        {
+            request.price = SymbolInfoDouble(symbol, SYMBOL_BID);
+            request.type = ORDER_TYPE_SELL;
+        }
+        else
+        {
+            request.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+            request.type = ORDER_TYPE_BUY;
+        }
+        
+        if(!OrderSend(request, result))
+        {
+            Print("Error closing position ", ticket, ": ", GetLastError());
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Function to open a trade                                          |
+//+------------------------------------------------------------------+
+void OpenTrade(ENUM_ORDER_TYPE orderType)
+{
+    MqlTradeRequest request = {};
+    MqlTradeResult result = {};
+    
+    double price;
+    double sl;
+    double tp;
+    
+    // Set up trade parameters based on order type
+    if(orderType == ORDER_TYPE_BUY)
+    {
+        price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+        sl = price - InpStopLoss * _Point;
+        tp = price + InpTakeProfit * _Point;
+    }
+    else
+    {
+        price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+        sl = price + InpStopLoss * _Point;
+        tp = price - InpTakeProfit * _Point;
+    }
+    
+    // Fill in the request structure
+    request.action = TRADE_ACTION_DEAL;
+    request.symbol = _Symbol;
+    request.volume = InpLotSize;
+    request.type = orderType;
+    request.price = price;
+    request.sl = sl;
+    request.tp = tp;
+    request.deviation = 10;
+    request.magic = 123456;
+    request.comment = InpComment;
+    request.type_filling = ORDER_FILLING_FOK;
+    
+    // Send the trade
+    if(!OrderSend(request, result))
+    {
+        Print("Error opening trade: ", GetLastError());
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Function to create a button                                       |
+//+------------------------------------------------------------------+
+bool ButtonCreate(const long              chart_ID=0,
+                 const string            name="Button",
+                 const int               sub_window=0,
+                 const int               x=0,
+                 const int               y=0,
+                 const int               width=50,
+                 const int               height=18,
+                 const ENUM_BASE_CORNER  corner=CORNER_LEFT_UPPER,
+                 const string            text="Button",
+                 const string            font="Arial",
+                 const int               font_size=10,
+                 const color             clr=clrBlack,
+                 const color             back_clr=C'236,233,216',
+                 const color             border_clr=clrNONE)
+{
+    ObjectCreate(chart_ID, name, OBJ_BUTTON, sub_window, 0, 0);
+    ObjectSetInteger(chart_ID, name, OBJPROP_XDISTANCE, x);
+    ObjectSetInteger(chart_ID, name, OBJPROP_YDISTANCE, y);
+    ObjectSetInteger(chart_ID, name, OBJPROP_XSIZE, width);
+    ObjectSetInteger(chart_ID, name, OBJPROP_YSIZE, height);
+    ObjectSetInteger(chart_ID, name, OBJPROP_CORNER, corner);
+    ObjectSetInteger(chart_ID, name, OBJPROP_FONTSIZE, font_size);
+    ObjectSetString(chart_ID, name, OBJPROP_FONT, font);
+    ObjectSetString(chart_ID, name, OBJPROP_TEXT, text);
+    ObjectSetInteger(chart_ID, name, OBJPROP_COLOR, clr);
+    ObjectSetInteger(chart_ID, name, OBJPROP_BGCOLOR, back_clr);
+    ObjectSetInteger(chart_ID, name, OBJPROP_BORDER_COLOR, border_clr);
+    ObjectSetInteger(chart_ID, name, OBJPROP_STATE, false);
+    ObjectSetInteger(chart_ID, name, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(chart_ID, name, OBJPROP_SELECTED, false);
+    ObjectSetInteger(chart_ID, name, OBJPROP_HIDDEN, true);
+    ObjectSetInteger(chart_ID, name, OBJPROP_ZORDER, 0);
+    
+    return(true);
+}
+
+//+------------------------------------------------------------------+
+//| Create information label                                          |
+//+------------------------------------------------------------------+
+void CreateLabel(const string name, const int x, const int y, const string text, const color clr)
+{
+    ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+    ObjectSetString(0, name, OBJPROP_TEXT, text);
+    ObjectSetString(0, name, OBJPROP_FONT, "Arial");
+    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 10);
+    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+}
+
+//+------------------------------------------------------------------+
+//| Update information labels                                         |
+//+------------------------------------------------------------------+
+void UpdateLabels()
+{
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double spread = (ask - bid) / _Point;
+    
+    ObjectSetString(0, "CurrentPrice", OBJPROP_TEXT, 
+                   "Current Price: " + DoubleToString(bid, _Digits));
+    ObjectSetString(0, "CurrentSpread", OBJPROP_TEXT, 
+                   "Spread: " + DoubleToString(spread, 1) + " points");
+    ObjectSetString(0, "SLInfo", OBJPROP_TEXT, 
+                   "SL Distance: " + DoubleToString(InpStopLoss, 0) + " points");
+    ObjectSetString(0, "TPInfo", OBJPROP_TEXT, 
+                   "TP Distance: " + DoubleToString(InpTakeProfit, 0) + " points");
+}
