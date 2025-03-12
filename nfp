@@ -1,0 +1,339 @@
+//+------------------------------------------------------------------+
+//|                                           NFP_Trade_Assistant.mq5 |
+//|                                                                  |
+//|                                                                  |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2025"
+#property link      ""
+#property version   "1.00"
+#property description "NFP Trade Assistant - Helps with trading during NFP announcements"
+
+// Include Trade library for MQL5
+#include <Trade\Trade.mqh>
+
+// Input parameters for trading
+input double LotSize = 0.01;          // Trading lot size
+input int PipsDistance = 20;          // Distance in pips for pending orders
+input int TrailingStepPips = 5;       // Trailing step in pips for moving stop loss
+
+// Input parameters for buttons
+input group "Button Settings"
+input int BuyButtonX = 10;            // Buy Button X Position
+input int BuyButtonY = 500;            // Buy Button Y Position
+input int SellButtonX = 10;          // Sell Button X Position
+input int SellButtonY = 600;           // Sell Button Y Position
+input int ButtonWidth = 100;          // Button Width
+input int ButtonHeight = 30;          // Button Height
+
+// Global variables
+ulong BuyStopTicket = 0;              // Ticket number for Buy Stop order
+ulong SellStopTicket = 0;             // Ticket number for Sell Stop order
+double PointValue;                    // Point value to convert pips to points
+bool IsTrailingActive = false;        // Flag to track if trailing is active
+CTrade Trade;                         // Trade object for trading operations
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // Calculate point value to convert pips to points
+   PointValue = _Point * 10;
+   
+   // Create custom buttons for the chart
+   ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true); // Enable mouse events
+   
+   Print("NFP Trade Assistant initialized successfully");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   // Remove any objects created by the EA
+   ObjectDelete(0, "BuyStopButton");
+   ObjectDelete(0, "SellStopButton");
+   
+   Print("NFP Trade Assistant removed from chart");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check for open positions and manage trailing stop loss
+   if(IsTrailingActive)
+      ManageTrailingStopLoss();
+   
+   // Create buttons if they don't exist
+   CreateButtons();
+}
+
+//+------------------------------------------------------------------+
+//| ChartEvent function                                              |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+{
+   // Process click events on custom buttons
+   if(id == CHARTEVENT_OBJECT_CLICK)
+   {
+      if(sparam == "BuyStopButton")
+      {
+         PlaceBuyStopOrder();
+      }
+      else if(sparam == "SellStopButton")
+      {
+         PlaceSellStopOrder();
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Create custom buttons on the chart                               |
+//+------------------------------------------------------------------+
+void CreateButtons()
+{
+   // Create Buy Stop Button if it doesn't exist
+   if(ObjectFind(0, "BuyStopButton") < 0)
+   {
+      ObjectCreate(0, "BuyStopButton", OBJ_BUTTON, 0, 0, 0);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_XDISTANCE, BuyButtonX);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_YDISTANCE, BuyButtonY);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_XSIZE, ButtonWidth);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_YSIZE, ButtonHeight);
+      ObjectSetString(0, "BuyStopButton", OBJPROP_TEXT, "Buy Stop");
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_COLOR, clrWhite);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_BGCOLOR, clrGreen);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_BORDER_COLOR, clrBlack);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_STATE, false);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_ZORDER, 1000);
+   }
+   else
+   {
+      // Update button position and size if inputs changed
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_XDISTANCE, BuyButtonX);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_YDISTANCE, BuyButtonY);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_XSIZE, ButtonWidth);
+      ObjectSetInteger(0, "BuyStopButton", OBJPROP_YSIZE, ButtonHeight);
+   }
+   
+   // Create Sell Stop Button if it doesn't exist
+   if(ObjectFind(0, "SellStopButton") < 0)
+   {
+      ObjectCreate(0, "SellStopButton", OBJ_BUTTON, 0, 0, 0);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_XDISTANCE, SellButtonX);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_YDISTANCE, SellButtonY);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_XSIZE, ButtonWidth);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_YSIZE, ButtonHeight);
+      ObjectSetString(0, "SellStopButton", OBJPROP_TEXT, "Sell Stop");
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_COLOR, clrWhite);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_BGCOLOR, clrRed);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_BORDER_COLOR, clrBlack);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_STATE, false);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_ZORDER, 1000);
+   }
+   else
+   {
+      // Update button position and size if inputs changed
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_XDISTANCE, SellButtonX);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_YDISTANCE, SellButtonY);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_XSIZE, ButtonWidth);
+      ObjectSetInteger(0, "SellStopButton", OBJPROP_YSIZE, ButtonHeight);
+   }
+   
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Place a Buy Stop order                                           |
+//+------------------------------------------------------------------+
+void PlaceBuyStopOrder()
+{
+   // First, delete any existing Buy Stop orders
+   if(BuyStopTicket > 0)
+   {
+      // Check if order still exists
+      if(!Trade.OrderDelete(BuyStopTicket))
+      {
+         Print("Failed to delete previous Buy Stop order: ", Trade.ResultRetcode());
+      }
+      else
+      {
+         Print("Previous Buy Stop order deleted");
+      }
+      BuyStopTicket = 0;
+   }
+   
+   // Calculate the price for the Buy Stop order
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double buyStopPrice = NormalizeDouble(currentPrice + PipsDistance * PointValue, _Digits);
+   
+   // Place the Buy Stop order
+   if(Trade.BuyStop(LotSize, buyStopPrice, _Symbol, 0, 0, ORDER_TIME_GTC, 0, "NFP Buy Stop"))
+   {
+      BuyStopTicket = Trade.ResultOrder();
+      Print("Buy Stop order placed successfully at price ", buyStopPrice, ", ticket: ", BuyStopTicket);
+      IsTrailingActive = true;
+   }
+   else
+   {
+      Print("Error placing Buy Stop order: ", Trade.ResultRetcode(), " - ", Trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Place a Sell Stop order                                          |
+//+------------------------------------------------------------------+
+void PlaceSellStopOrder()
+{
+   // First, delete any existing Sell Stop orders
+   if(SellStopTicket > 0)
+   {
+      // Check if order still exists
+      if(!Trade.OrderDelete(SellStopTicket))
+      {
+         Print("Failed to delete previous Sell Stop order: ", Trade.ResultRetcode());
+      }
+      else
+      {
+         Print("Previous Sell Stop order deleted");
+      }
+      SellStopTicket = 0;
+   }
+   
+   // Calculate the price for the Sell Stop order
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double sellStopPrice = NormalizeDouble(currentPrice - PipsDistance * PointValue, _Digits);
+   
+   // Place the Sell Stop order
+   if(Trade.SellStop(LotSize, sellStopPrice, _Symbol, 0, 0, ORDER_TIME_GTC, 0, "NFP Sell Stop"))
+   {
+      SellStopTicket = Trade.ResultOrder();
+      Print("Sell Stop order placed successfully at price ", sellStopPrice, ", ticket: ", SellStopTicket);
+      IsTrailingActive = true;
+   }
+   else
+   {
+      Print("Error placing Sell Stop order: ", Trade.ResultRetcode(), " - ", Trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Manage trailing stop loss for open positions                      |
+//+------------------------------------------------------------------+
+void ManageTrailingStopLoss()
+{
+   // Loop through all open positions
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      // Check if this is our position (match by comment)
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      
+      string posComment = PositionGetString(POSITION_COMMENT);
+      if(StringFind(posComment, "NFP Buy Stop") >= 0 || StringFind(posComment, "NFP Sell Stop") >= 0)
+      {
+         // Get position details
+         double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double currentSL = PositionGetDouble(POSITION_SL);
+         double currentPrice = 0;
+         ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         
+         // Process based on position type
+         if(posType == POSITION_TYPE_BUY)
+         {
+            currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            // Calculate new stop loss level
+            double newSL = 0;
+            
+            // If price has moved at least TrailingStepPips above entry
+            if(currentPrice >= openPrice + TrailingStepPips * PointValue)
+            {
+               // If no SL set or current SL is below break-even, set to break-even
+               if(currentSL == 0 || currentSL < openPrice)
+               {
+                  newSL = openPrice;  // Break-even
+                  Print("Setting Buy position to break-even, ticket: ", ticket);
+               }
+               else
+               {
+                  // If price has moved another TrailingStepPips from current SL
+                  if(currentPrice >= currentSL + TrailingStepPips * PointValue)
+                  {
+                     newSL = currentSL + TrailingStepPips * PointValue;
+                     Print("Moving Buy stop loss up by ", TrailingStepPips, " pips, ticket: ", ticket);
+                  }
+                  else
+                  {
+                     // No need to update SL
+                     continue;
+                  }
+               }
+               
+               // Update stop loss
+               if(newSL > 0 && newSL != currentSL)
+               {
+                  newSL = NormalizeDouble(newSL, _Digits);
+                  
+                  // Modify position
+                  if(!Trade.PositionModify(ticket, newSL, PositionGetDouble(POSITION_TP)))
+                     Print("Error updating Buy stop loss: ", Trade.ResultRetcode(), " - ", Trade.ResultRetcodeDescription());
+                  else
+                     Print("Buy stop loss updated to: ", newSL);
+               }
+            }
+         }
+         else if(posType == POSITION_TYPE_SELL)
+         {
+            currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+            // Calculate new stop loss level
+            double newSL = 0;
+            
+            // If price has moved at least TrailingStepPips below entry
+            if(currentPrice <= openPrice - TrailingStepPips * PointValue)
+            {
+               // If no SL set or current SL is above break-even, set to break-even
+               if(currentSL == 0 || currentSL > openPrice)
+               {
+                  newSL = openPrice;  // Break-even
+                  Print("Setting Sell position to break-even, ticket: ", ticket);
+               }
+               else
+               {
+                  // If price has moved another TrailingStepPips from current SL
+                  if(currentPrice <= currentSL - TrailingStepPips * PointValue)
+                  {
+                     newSL = currentSL - TrailingStepPips * PointValue;
+                     Print("Moving Sell stop loss down by ", TrailingStepPips, " pips, ticket: ", ticket);
+                  }
+                  else
+                  {
+                     // No need to update SL
+                     continue;
+                  }
+               }
+               
+               // Update stop loss
+               if(newSL > 0 && newSL != currentSL)
+               {
+                  newSL = NormalizeDouble(newSL, _Digits);
+                  
+                  // Modify position
+                  if(!Trade.PositionModify(ticket, newSL, PositionGetDouble(POSITION_TP)))
+                     Print("Error updating Sell stop loss: ", Trade.ResultRetcode(), " - ", Trade.ResultRetcodeDescription());
+                  else
+                     Print("Sell stop loss updated to: ", newSL);
+               }
+            }
+         }
+      }
+   }
+}
